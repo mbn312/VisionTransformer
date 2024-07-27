@@ -29,12 +29,17 @@ class PatchEmbedding(nn.Module):
     return x
   
 class PositionalEncoding(nn.Module):
-  def __init__(self, d_model, max_seq_length):
+  def __init__(self, d_model, max_seq_length, learned_pe=True):
     super().__init__()
 
-    self.cls_token = nn.Parameter(torch.randn(1, 1, d_model)) # Classification Token
+    if learned_pe:
+      positional_encoding = nn.Parameter((d_model ** -0.5) * torch.randn(1, max_seq_length, d_model))
+    else:
+      positional_encoding = self.create_encoding(max_seq_length, d_model)
 
-    # Creating positional encoding
+    self.register_buffer('positional_encoding', positional_encoding)
+
+  def create_encoding(self, max_seq_length, d_model):
     pe = torch.zeros(max_seq_length, d_model)
 
     for pos in range(max_seq_length):
@@ -44,17 +49,11 @@ class PositionalEncoding(nn.Module):
         else:
           pe[pos][i] = np.cos(pos/(10000 ** ((i-1)/d_model)))
 
-    self.register_buffer('pe', pe.unsqueeze(0))
+    return pe[None, ...]
 
   def forward(self, x):
-    # Expand to have class token for every image in batch
-    tokens_batch = self.cls_token.expand(x.size()[0], -1, -1)
-
-    # Adding class tokens to the beginning of each embedding
-    x = torch.cat((tokens_batch,x), dim=1)
-
     # Add positional encoding to embeddings
-    x = x + self.pe
+    x = x + self.positional_encoding
 
     return x 
   
@@ -143,7 +142,7 @@ class TransformerEncoder(nn.Module):
     return out
   
 class VisionTransformer(nn.Module):
-  def __init__(self, d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers):
+  def __init__(self, d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe=True):
     super().__init__()
 
     assert img_size[0] % patch_size[0] == 0 and img_size[1] % patch_size[1] == 0, "img_size dimensions must be divisible by patch_size dimensions"
@@ -158,9 +157,13 @@ class VisionTransformer(nn.Module):
 
     self.n_patches = (self.img_size[0] * self.img_size[1]) // (self.patch_size[0] * self.patch_size[1])
     self.max_seq_length = self.n_patches + 1
-
+    
     self.patch_embedding = PatchEmbedding(self.d_model, self.img_size, self.patch_size, self.n_channels)
-    self.positional_encoding = PositionalEncoding( self.d_model, self.max_seq_length)
+
+    self.cls_token = nn.Parameter(torch.randn(1, 1, self.d_model)) # Classification Token
+
+    self.positional_encoding = PositionalEncoding( self.d_model, self.max_seq_length, learned_pe=learned_pe)
+
     self.transformer_encoder = nn.Sequential(*[TransformerEncoder( self.d_model, self.n_heads) for _ in range(n_layers)])
 
     # Classification MLP
@@ -172,6 +175,12 @@ class VisionTransformer(nn.Module):
 
   def forward(self, images):
     x = self.patch_embedding(images)
+
+    # Expand to have class token for every image in batch
+    tokens_batch = self.cls_token.expand(x.size()[0], -1, -1)
+
+    # Adding class tokens to the beginning of each embedding
+    x = torch.cat((tokens_batch,x), dim=1)
 
     x = self.positional_encoding(x)
 

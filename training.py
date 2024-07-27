@@ -6,11 +6,11 @@ from models.model import VisionTransformer
 
 DEVICE = torch.device("cpu")
 
-def train(d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, batch_size, epochs, lr):
+def train(d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe, batch_size, epochs, lr):
 
     train_loader = get_dataset(img_size, batch_size)
 
-    vit = VisionTransformer(d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers).to(DEVICE)
+    vit = VisionTransformer(d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe).to(DEVICE)
 
     optimizer = Adam(vit.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
@@ -64,6 +64,7 @@ if __name__=="__main__":
     n_channels = 1
     n_heads = 3
     n_layers = 3
+    learned_pe = True
     batch_size = 128
     epochs = 5
     lr = 0.005
@@ -71,6 +72,6 @@ if __name__=="__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", DEVICE, f"({torch.cuda.get_device_name(DEVICE)})" if torch.cuda.is_available() else "")
 
-    vit = train(d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, batch_size, epochs, lr)
+    vit = train(d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe, batch_size, epochs, lr)
 
     test(vit, img_size, batch_size)
