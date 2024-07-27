@@ -58,50 +58,59 @@ class PositionalEncoding(nn.Module):
 
     return x 
   
-class AttentionHead(nn.Module):
-  def __init__(self, d_model, head_size):
-    super().__init__()
-    self.head_size = head_size
-
-    self.query = nn.Linear(d_model, head_size)
-    self.key = nn.Linear(d_model, head_size)
-    self.value = nn.Linear(d_model, head_size)
-
-  def forward(self, x):
-    # Obtaining Queries, Keys, and Values
-    Q = self.query(x)
-    K = self.key(x)
-    V = self.value(x)
-
-    # Dot Product of Queries and Keys
-    attention = Q @ K.transpose(-2,-1)
-
-    # Scaling
-    attention = attention / (self.head_size ** 0.5)
-
-    attention = torch.softmax(attention, dim=-1)
-
-    attention = attention @ V
-
-    return attention
-
 class MultiHeadAttention(nn.Module):
   def __init__(self, d_model, n_heads):
     super().__init__()
+
+    self.n_heads = n_heads
     self.head_size = d_model // n_heads
+    self.scale = self.head_size ** -0.5
+    
+    self.query = nn.Linear(d_model, d_model)
+    self.key = nn.Linear(d_model, d_model)
+    self.value = nn.Linear(d_model, d_model)
 
-    self.W_o = nn.Linear(d_model, d_model)
-
-    self.heads = nn.ModuleList([AttentionHead(d_model, self.head_size) for _ in range(n_heads)])
+    self.output_projection = nn.Linear(d_model, d_model)
 
   def forward(self, x):
-    # Combine attention heads
-    out = torch.cat([head(x) for head in self.heads], dim=-1)
+    B, L, d_model = x.shape
 
-    out = self.W_o(out)
+    # Obtain query heads
+    Q = self.query(x) # (B, L, d_model) -> (B, L, d_model)
+    Q = Q.view(B, L, self.n_heads, self.head_size) # (B, L, model_width) -> (B, L, n_heads, head_size)
+    Q = Q.transpose(1, 2)  # (B, L, n_heads, head_size) -> (B, n_heads, L, head_size)
+    
+    # Obtain key heads
+    K = self.query(x)
+    K = K.view(B, L, self.n_heads, self.head_size)
+    K = K.transpose(1, 2)
 
-    return out
-  
+    # Obtain value heads
+    V = self.query(x)
+    V = V.view(B, L, self.n_heads, self.head_size)
+    V = V.transpose(1, 2) 
+
+    # Get dot product between queries and keys
+    attention = torch.matmul(Q, K.transpose(-2, -1))  # (B, n_heads, L, head_size) @ (B, n_heads, head_size, L) -> (B, n_heads, L, L)
+
+    # Scale
+    attention = attention * self.scale
+
+    # Apply softmax
+    attention = torch.softmax(attention, dim=-1)
+
+    # Get dot product with values
+    attention = torch.matmul(attention, V) # (B, n_heads, L, L) @ (B, n_heads, L, head_size) -> (B, n_heads, L, head_size)
+
+    # Combine heads
+    attention = attention.transpose(1, 2) # (B, n_heads, L, head_size) -> (B, L, n_heads, head_size)
+    attention = attention.contiguous().view(B, L, d_model) # (B, L, n_heads, head_size) -> (B, L, d_model)
+
+    # Output projection
+    attention = self.output_projection(attention) # (B, L, d_model) -> (B, L, d_model)
+
+    return attention
+
 class TransformerEncoder(nn.Module):
   def __init__(self, d_model, n_heads, r_mlp=4):
     super().__init__()
