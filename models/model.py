@@ -165,6 +165,7 @@ class VisionTransformer(nn.Module):
 
     # Classification MLP
     self.classifier = nn.Sequential(
+        nn.LayerNorm(self.d_model),
         nn.Linear(self.d_model, self.n_classes),
         nn.Softmax(dim=-1)
     )
