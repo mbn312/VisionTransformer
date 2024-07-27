@@ -58,18 +58,18 @@ class PositionalEncoding(nn.Module):
     return x 
   
 class MultiHeadAttention(nn.Module):
-  def __init__(self, d_model, n_heads):
+  def __init__(self, d_model, n_heads, bias=False):
     super().__init__()
 
     self.n_heads = n_heads
     self.head_size = d_model // n_heads
     self.scale = self.head_size ** -0.5
     
-    self.query = nn.Linear(d_model, d_model)
-    self.key = nn.Linear(d_model, d_model)
-    self.value = nn.Linear(d_model, d_model)
+    self.query = nn.Linear(d_model, d_model, bias=bias)
+    self.key = nn.Linear(d_model, d_model, bias=bias)
+    self.value = nn.Linear(d_model, d_model, bias=bias)
 
-    self.output_projection = nn.Linear(d_model, d_model)
+    self.output_projection = nn.Linear(d_model, d_model, bias=bias)
 
   def forward(self, x):
     B, L, d_model = x.shape
@@ -111,7 +111,7 @@ class MultiHeadAttention(nn.Module):
     return attention
 
 class TransformerEncoder(nn.Module):
-  def __init__(self, d_model, n_heads, r_mlp=4):
+  def __init__(self, d_model, n_heads, r_mlp=4, bias=False):
     super().__init__()
     self.d_model = d_model
     self.n_heads = n_heads
@@ -120,16 +120,16 @@ class TransformerEncoder(nn.Module):
     self.ln1 = nn.LayerNorm(d_model)
 
     # Multi-Head Attention
-    self.mha = MultiHeadAttention(d_model, n_heads)
+    self.mha = MultiHeadAttention(d_model, n_heads, bias=bias)
 
     # Sub-Layer 2 Normalization
     self.ln2 = nn.LayerNorm(d_model)
 
     # Multilayer Perception
     self.mlp = nn.Sequential(
-        nn.Linear(d_model, d_model*r_mlp),
+        nn.Linear(d_model, d_model*r_mlp, bias=bias),
         nn.GELU(),
-        nn.Linear(d_model*r_mlp, d_model)
+        nn.Linear(d_model*r_mlp, d_model, bias=bias)
     )
 
   def forward(self, x):
@@ -142,7 +142,7 @@ class TransformerEncoder(nn.Module):
     return out
   
 class VisionTransformer(nn.Module):
-  def __init__(self, d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe=True):
+  def __init__(self, d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe=True, r_mlp=4, bias=False):
     super().__init__()
 
     assert img_size[0] % patch_size[0] == 0 and img_size[1] % patch_size[1] == 0, "img_size dimensions must be divisible by patch_size dimensions"
@@ -164,12 +164,12 @@ class VisionTransformer(nn.Module):
 
     self.positional_encoding = PositionalEncoding( self.d_model, self.max_seq_length, learned_pe=learned_pe)
 
-    self.transformer_encoder = nn.Sequential(*[TransformerEncoder( self.d_model, self.n_heads) for _ in range(n_layers)])
+    self.transformer_encoder = nn.Sequential(*[TransformerEncoder( self.d_model, self.n_heads, r_mlp=r_mlp, bias=bias) for _ in range(n_layers)])
 
     # Classification MLP
     self.classifier = nn.Sequential(
         nn.LayerNorm(self.d_model),
-        nn.Linear(self.d_model, self.n_classes),
+        nn.Linear(self.d_model, self.n_classes, bias=bias),
         nn.Softmax(dim=-1)
     )
 
