@@ -29,7 +29,7 @@ class PatchEmbedding(nn.Module):
     return x
   
 class PositionalEncoding(nn.Module):
-  def __init__(self, d_model, max_seq_length, learned_pe=True):
+  def __init__(self, d_model, max_seq_length, learned_pe=True, dropout=0.):
     super().__init__()
 
     if learned_pe:
@@ -38,6 +38,8 @@ class PositionalEncoding(nn.Module):
       positional_encoding = self.create_encoding(max_seq_length, d_model)
 
     self.register_buffer('positional_encoding', positional_encoding)
+
+    self.dropout = nn.Dropout(dropout)
 
   def create_encoding(self, max_seq_length, d_model):
     pe = torch.zeros(max_seq_length, d_model)
@@ -55,10 +57,12 @@ class PositionalEncoding(nn.Module):
     # Add positional encoding to embeddings
     x = x + self.positional_encoding
 
+    x = self.dropout(x)
+
     return x 
   
 class MultiHeadAttention(nn.Module):
-  def __init__(self, d_model, n_heads, bias=False):
+  def __init__(self, d_model, n_heads, dropout=0.0, bias=False):
     super().__init__()
 
     self.n_heads = n_heads
@@ -70,6 +74,8 @@ class MultiHeadAttention(nn.Module):
     self.value = nn.Linear(d_model, d_model, bias=bias)
 
     self.output_projection = nn.Linear(d_model, d_model, bias=bias)
+
+    self.dropout = nn.Dropout(dropout)
 
   def forward(self, x):
     B, L, d_model = x.shape
@@ -108,10 +114,12 @@ class MultiHeadAttention(nn.Module):
     # Output projection
     attention = self.output_projection(attention) # (B, L, d_model) -> (B, L, d_model)
 
+    attention = self.dropout(attention)
+
     return attention
 
 class TransformerEncoder(nn.Module):
-  def __init__(self, d_model, n_heads, r_mlp=4, bias=False):
+  def __init__(self, d_model, n_heads, dropout=0.0, r_mlp=4, bias=False):
     super().__init__()
     self.d_model = d_model
     self.n_heads = n_heads
@@ -120,7 +128,7 @@ class TransformerEncoder(nn.Module):
     self.ln1 = nn.LayerNorm(d_model)
 
     # Multi-Head Attention
-    self.mha = MultiHeadAttention(d_model, n_heads, bias=bias)
+    self.mha = MultiHeadAttention(d_model, n_heads, dropout=dropout, bias=bias)
 
     # Sub-Layer 2 Normalization
     self.ln2 = nn.LayerNorm(d_model)
@@ -129,7 +137,8 @@ class TransformerEncoder(nn.Module):
     self.mlp = nn.Sequential(
         nn.Linear(d_model, d_model*r_mlp, bias=bias),
         nn.GELU(),
-        nn.Linear(d_model*r_mlp, d_model, bias=bias)
+        nn.Linear(d_model*r_mlp, d_model, bias=bias),
+        nn.Dropout(dropout)
     )
 
   def forward(self, x):
@@ -142,7 +151,7 @@ class TransformerEncoder(nn.Module):
     return out
   
 class VisionTransformer(nn.Module):
-  def __init__(self, d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe=True, r_mlp=4, bias=False):
+  def __init__(self, d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe=True, dropout=0.0, r_mlp=4, bias=False):
     super().__init__()
 
     assert img_size[0] % patch_size[0] == 0 and img_size[1] % patch_size[1] == 0, "img_size dimensions must be divisible by patch_size dimensions"
@@ -162,9 +171,9 @@ class VisionTransformer(nn.Module):
 
     self.cls_token = nn.Parameter(torch.randn(1, 1, self.d_model)) # Classification Token
 
-    self.positional_encoding = PositionalEncoding( self.d_model, self.max_seq_length, learned_pe=learned_pe)
+    self.positional_encoding = PositionalEncoding( self.d_model, self.max_seq_length, learned_pe=learned_pe, dropout=dropout)
 
-    self.transformer_encoder = nn.Sequential(*[TransformerEncoder( self.d_model, self.n_heads, r_mlp=r_mlp, bias=bias) for _ in range(n_layers)])
+    self.transformer_encoder = nn.Sequential(*[TransformerEncoder( self.d_model, self.n_heads, dropout=dropout, r_mlp=r_mlp, bias=bias) for _ in range(n_layers)])
 
     # Classification MLP
     self.classifier = nn.Sequential(
