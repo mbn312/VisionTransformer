@@ -29,12 +29,19 @@ class PatchEmbedding(nn.Module):
     return x
   
 class PositionalEncoding(nn.Module):
-  def __init__(self, d_model, max_seq_length):
+  def __init__(self, d_model, max_seq_length, learned_pe=True, dropout=0.):
     super().__init__()
 
-    self.cls_token = nn.Parameter(torch.randn(1, 1, d_model)) # Classification Token
+    if learned_pe:
+      positional_encoding = nn.Parameter((d_model ** -0.5) * torch.randn(1, max_seq_length, d_model))
+    else:
+      positional_encoding = self.create_encoding(max_seq_length, d_model)
 
-    # Creating positional encoding
+    self.register_buffer('positional_encoding', positional_encoding)
+
+    self.dropout = nn.Dropout(dropout)
+
+  def create_encoding(self, max_seq_length, d_model):
     pe = torch.zeros(max_seq_length, d_model)
 
     for pos in range(max_seq_length):
@@ -44,66 +51,75 @@ class PositionalEncoding(nn.Module):
         else:
           pe[pos][i] = np.cos(pos/(10000 ** ((i-1)/d_model)))
 
-    self.register_buffer('pe', pe.unsqueeze(0))
+    return pe[None, ...]
 
   def forward(self, x):
-    # Expand to have class token for every image in batch
-    tokens_batch = self.cls_token.expand(x.size()[0], -1, -1)
-
-    # Adding class tokens to the beginning of each embedding
-    x = torch.cat((tokens_batch,x), dim=1)
-
     # Add positional encoding to embeddings
-    x = x + self.pe
+    x = x + self.positional_encoding
+
+    x = self.dropout(x)
 
     return x 
   
-class AttentionHead(nn.Module):
-  def __init__(self, d_model, head_size):
+class MultiHeadAttention(nn.Module):
+  def __init__(self, d_model, n_heads, dropout=0.0, bias=False):
     super().__init__()
-    self.head_size = head_size
 
-    self.query = nn.Linear(d_model, head_size)
-    self.key = nn.Linear(d_model, head_size)
-    self.value = nn.Linear(d_model, head_size)
+    self.n_heads = n_heads
+    self.head_size = d_model // n_heads
+    self.scale = self.head_size ** -0.5
+    
+    self.query = nn.Linear(d_model, d_model, bias=bias)
+    self.key = nn.Linear(d_model, d_model, bias=bias)
+    self.value = nn.Linear(d_model, d_model, bias=bias)
+
+    self.output_projection = nn.Linear(d_model, d_model, bias=bias)
+
+    self.dropout = nn.Dropout(dropout)
 
   def forward(self, x):
-    # Obtaining Queries, Keys, and Values
-    Q = self.query(x)
-    K = self.key(x)
-    V = self.value(x)
+    B, L, d_model = x.shape
 
-    # Dot Product of Queries and Keys
-    attention = Q @ K.transpose(-2,-1)
+    # Obtain query heads
+    Q = self.query(x) # (B, L, d_model) -> (B, L, d_model)
+    Q = Q.view(B, L, self.n_heads, self.head_size) # (B, L, model_width) -> (B, L, n_heads, head_size)
+    Q = Q.transpose(1, 2)  # (B, L, n_heads, head_size) -> (B, n_heads, L, head_size)
+    
+    # Obtain key heads
+    K = self.query(x)
+    K = K.view(B, L, self.n_heads, self.head_size)
+    K = K.transpose(1, 2)
 
-    # Scaling
-    attention = attention / (self.head_size ** 0.5)
+    # Obtain value heads
+    V = self.query(x)
+    V = V.view(B, L, self.n_heads, self.head_size)
+    V = V.transpose(1, 2) 
 
+    # Get dot product between queries and keys
+    attention = torch.matmul(Q, K.transpose(-2, -1))  # (B, n_heads, L, head_size) @ (B, n_heads, head_size, L) -> (B, n_heads, L, L)
+
+    # Scale
+    attention = attention * self.scale
+
+    # Apply softmax
     attention = torch.softmax(attention, dim=-1)
 
-    attention = attention @ V
+    # Get dot product with values
+    attention = torch.matmul(attention, V) # (B, n_heads, L, L) @ (B, n_heads, L, head_size) -> (B, n_heads, L, head_size)
+
+    # Combine heads
+    attention = attention.transpose(1, 2) # (B, n_heads, L, head_size) -> (B, L, n_heads, head_size)
+    attention = attention.contiguous().view(B, L, d_model) # (B, L, n_heads, head_size) -> (B, L, d_model)
+
+    # Output projection
+    attention = self.output_projection(attention) # (B, L, d_model) -> (B, L, d_model)
+
+    attention = self.dropout(attention)
 
     return attention
 
-class MultiHeadAttention(nn.Module):
-  def __init__(self, d_model, n_heads):
-    super().__init__()
-    self.head_size = d_model // n_heads
-
-    self.W_o = nn.Linear(d_model, d_model)
-
-    self.heads = nn.ModuleList([AttentionHead(d_model, self.head_size) for _ in range(n_heads)])
-
-  def forward(self, x):
-    # Combine attention heads
-    out = torch.cat([head(x) for head in self.heads], dim=-1)
-
-    out = self.W_o(out)
-
-    return out
-  
 class TransformerEncoder(nn.Module):
-  def __init__(self, d_model, n_heads, r_mlp=4):
+  def __init__(self, d_model, n_heads, dropout=0.0, r_mlp=4, bias=False):
     super().__init__()
     self.d_model = d_model
     self.n_heads = n_heads
@@ -112,16 +128,17 @@ class TransformerEncoder(nn.Module):
     self.ln1 = nn.LayerNorm(d_model)
 
     # Multi-Head Attention
-    self.mha = MultiHeadAttention(d_model, n_heads)
+    self.mha = MultiHeadAttention(d_model, n_heads, dropout=dropout, bias=bias)
 
     # Sub-Layer 2 Normalization
     self.ln2 = nn.LayerNorm(d_model)
 
     # Multilayer Perception
     self.mlp = nn.Sequential(
-        nn.Linear(d_model, d_model*r_mlp),
+        nn.Linear(d_model, d_model*r_mlp, bias=bias),
         nn.GELU(),
-        nn.Linear(d_model*r_mlp, d_model)
+        nn.Linear(d_model*r_mlp, d_model, bias=bias),
+        nn.Dropout(dropout)
     )
 
   def forward(self, x):
@@ -134,7 +151,7 @@ class TransformerEncoder(nn.Module):
     return out
   
 class VisionTransformer(nn.Module):
-  def __init__(self, d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers):
+  def __init__(self, d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe=True, dropout=0.0, r_mlp=4, bias=False):
     super().__init__()
 
     assert img_size[0] % patch_size[0] == 0 and img_size[1] % patch_size[1] == 0, "img_size dimensions must be divisible by patch_size dimensions"
@@ -149,19 +166,30 @@ class VisionTransformer(nn.Module):
 
     self.n_patches = (self.img_size[0] * self.img_size[1]) // (self.patch_size[0] * self.patch_size[1])
     self.max_seq_length = self.n_patches + 1
-
+    
     self.patch_embedding = PatchEmbedding(self.d_model, self.img_size, self.patch_size, self.n_channels)
-    self.positional_encoding = PositionalEncoding( self.d_model, self.max_seq_length)
-    self.transformer_encoder = nn.Sequential(*[TransformerEncoder( self.d_model, self.n_heads) for _ in range(n_layers)])
+
+    self.cls_token = nn.Parameter(torch.randn(1, 1, self.d_model)) # Classification Token
+
+    self.positional_encoding = PositionalEncoding( self.d_model, self.max_seq_length, learned_pe=learned_pe, dropout=dropout)
+
+    self.transformer_encoder = nn.Sequential(*[TransformerEncoder( self.d_model, self.n_heads, dropout=dropout, r_mlp=r_mlp, bias=bias) for _ in range(n_layers)])
 
     # Classification MLP
     self.classifier = nn.Sequential(
-        nn.Linear(self.d_model, self.n_classes),
+        nn.LayerNorm(self.d_model),
+        nn.Linear(self.d_model, self.n_classes, bias=bias),
         nn.Softmax(dim=-1)
     )
 
   def forward(self, images):
     x = self.patch_embedding(images)
+
+    # Expand to have class token for every image in batch
+    tokens_batch = self.cls_token.expand(x.size()[0], -1, -1)
+
+    # Adding class tokens to the beginning of each embedding
+    x = torch.cat((tokens_batch,x), dim=1)
 
     x = self.positional_encoding(x)
 
