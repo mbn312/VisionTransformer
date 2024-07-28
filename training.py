@@ -3,78 +3,74 @@ import torch.nn as nn
 from torch.optim import Adam
 from data.data_utils import get_dataset
 from models.model import VisionTransformer
+from data.data_utils import get_config
 
 DEVICE = torch.device("cpu")
 
-def train(d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe, dropout, r_mlp, bias, batch_size, epochs, lr):
+def train_model(config):
 
-    train_loader = get_dataset(img_size, batch_size)
+    train_loader = get_dataset(config)
 
-    vit = VisionTransformer(d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe, dropout, r_mlp, bias).to(DEVICE)
+    model = VisionTransformer(
+        config.d_model,         
+        config.n_classes,               
+        config.img_size,          
+        config.patch_size,        
+        config.n_channels,       
+        config.n_heads,         
+        config.n_layers,         
+        config.learned_pe,  
+        config.dropout,      
+        config.r_mlp,          
+        config.bias         
+    ).to(DEVICE)
 
-    optimizer = Adam(vit.parameters(), lr=lr)
+    optimizer = Adam(model.parameters(), lr=config.lr)
     criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(epochs):
+    model.train()
+    for epoch in range(config.epochs):
         training_loss = 0.0
-        for i, data in enumerate(train_loader, 0):
-            inputs, labels = data
+        for inputs, labels in train_loader:
             inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
 
             optimizer.zero_grad()
-
-            outputs = vit(inputs)
+            outputs = model(inputs)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
 
             training_loss += loss.item()
 
-        print(f'Epoch {epoch + 1}/{epochs} loss: {training_loss  / len(train_loader) :.3f}')
+        print(f'[Epoch {epoch + 1}/{config.epochs}] Training Loss: {training_loss  / len(train_loader) :.3f}')
 
-    return vit
+    return model
 
 
-def test(vit, img_size, batch_size):
+def test(model, config):
 
-    correct = 0
-    total = 0
+    test_loader = get_dataset(config, train=False)
 
-    test_loader = get_dataset(img_size, batch_size, DEVICE)
-
+    model.eval()
+    correct, total = 0, 0
     with torch.no_grad():
-        for data in test_loader:
-            images, labels = data
+        for images, labels in test_loader:
             images, labels = images.to(DEVICE), labels.to(DEVICE)
 
-            outputs = vit(images)
-
+            outputs = model(images)
             _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
+            total += labels.shape[0]
             correct += (predicted == labels).sum().item()
 
-    print(f'Model Accuracy: {100 * correct // total} %') 
+    print(f'-------------------------\n Model Accuracy: {(100 * correct / total):.2f} %\n-------------------------')
 
 
 if __name__=="__main__":
-    d_model = 9
-    n_classes = 10
-    img_size = (32,32)
-    patch_size = (16,16)
-    n_channels = 1
-    n_heads = 3
-    n_layers = 3
-    learned_pe = True
-    dropout = 0.2
-    r_mlp = 4
-    bias = False
-    batch_size = 128
-    epochs = 5
-    lr = 0.005
+    config = get_config("mnist")
 
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", DEVICE, f"({torch.cuda.get_device_name(DEVICE)})" if torch.cuda.is_available() else "")
 
-    vit = train(d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe, dropout, r_mlp, bias, batch_size, epochs, lr)
+    model = train_model(config)
 
-    test(vit, img_size, batch_size)
+    test(model, config)
