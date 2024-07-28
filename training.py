@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 from torch.optim import Adam, AdamW, lr_scheduler
-from data.data_utils import get_config, get_dataset
+from data.data_utils import *
 from models.model import VisionTransformer
 
 DEVICE = torch.device("cpu")
 
 def train_model(config):
 
-    train_loader = get_dataset(config)
+    train_loader, val_loader = get_train_val_split(config)
 
     model = VisionTransformer(
         config.d_model,         
@@ -36,33 +36,77 @@ def train_model(config):
 
     criterion = nn.CrossEntropyLoss()
 
-    model.train()
+    best_loss = float('inf')
+
     for epoch in range(config.epochs):
+        # Training
+        model.train()
         training_loss = 0.0
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-
             training_loss += loss.item()
 
+        training_loss = training_loss / len(train_loader)
+        # Update learning rate scheduler
         if epoch < config.warmup_epochs:
             warmup.step()
         else:
             scheduler.step()
 
-        print(f'[Epoch {epoch + 1}/{config.epochs}] Training Loss: {training_loss  / len(train_loader) :.3f}')
+        # Validation
+        model.eval()
+        validation_loss = 0.0
+        correct, total = 0, 0
+        for inputs, labels in val_loader:
+            inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            validation_loss += loss.item()
 
-    return model
+            if config.get_val_accuracy:
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.shape[0]
+                correct += (predicted == labels).sum().item()
 
+        validation_loss = validation_loss / len(val_loader)
 
-def test(model, config):
+        # Saves model if it performed better than the previous best
+        if validation_loss <= best_loss:
+            best_loss = validation_loss
+            torch.save(model.state_dict(), config.model_location)
 
-    test_loader = get_dataset(config, train=False)
+        # Print out metrics
+        if config.get_val_accuracy:
+            print(f"[Epoch {epoch + 1}/{config.epochs}] Training Loss: {training_loss:.3f} | Validation Loss: {validation_loss:.3f} | Validation Accuracy: {100 * correct / total:.2f}")
+        else:
+            print(f"[Epoch {epoch + 1}/{config.epochs}] Training Loss: {training_loss:.3f} | Validation Loss: {validation_loss:.3f}")
+
+def get_model_accuracy(config):
+
+    # Load trained model
+    model = VisionTransformer(
+        config.d_model,         
+        config.n_classes,               
+        config.img_size,          
+        config.patch_size,        
+        config.n_channels,       
+        config.n_heads,         
+        config.n_layers,         
+        config.learned_pe,  
+        config.dropout,      
+        config.r_mlp,          
+        config.bias         
+    ).to(DEVICE)
+
+    model.load_state_dict(torch.load(config.model_location, map_location=DEVICE))
+
+    # Get test set
+    test_loader = get_test_set(config)
 
     model.eval()
     correct, total = 0, 0
@@ -86,6 +130,6 @@ if __name__=="__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", DEVICE, f"({torch.cuda.get_device_name(DEVICE)})" if torch.cuda.is_available() else "")
 
-    model = train_model(config)
+    train_model(config)
 
-    test(model, config)
+    get_model_accuracy(config)

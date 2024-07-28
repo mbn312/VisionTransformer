@@ -15,6 +15,8 @@ class MNISTConfig:
     dropout = 0.0
     r_mlp = 4
     bias = False
+    train_val_split = (50000, 10000)
+    get_val_accuracy = True
     batch_size = 128
     n_workers = 0
     lr = 5e-4
@@ -22,6 +24,7 @@ class MNISTConfig:
     weight_decay = 1e-4
     epochs = 5
     warmup_epochs = 0
+    model_location = "model.pt"
 
 @dataclass
 class FMNISTConfig:
@@ -38,6 +41,8 @@ class FMNISTConfig:
     dropout = 0.0
     r_mlp = 4
     bias = False
+    train_val_split = (50000, 10000)
+    get_val_accuracy = True
     batch_size = 128
     n_workers = 0
     lr = 5e-4
@@ -45,6 +50,7 @@ class FMNISTConfig:
     weight_decay = 1e-4
     epochs = 5
     warmup_epochs = 0
+    model_location = "model.pt"
 
 @dataclass
 class CIFAR10Config:
@@ -61,6 +67,8 @@ class CIFAR10Config:
     dropout = 0.0
     r_mlp = 4
     bias = False
+    train_val_split = (45000, 5000)
+    get_val_accuracy = True
     batch_size = 128
     n_workers = 0
     lr = 5e-4
@@ -68,3 +76,4 @@ class CIFAR10Config:
     weight_decay = 1e-4
     epochs = 5
     warmup_epochs = 0
+    model_location = "model.pt"
