@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
 from torch.optim import Adam
-from data.data_utils import get_dataset
+from data.data_utils import get_config, get_dataset
 from models.model import VisionTransformer
-from data.data_utils import get_config
 
 DEVICE = torch.device("cpu")
 
@@ -66,7 +65,9 @@ def test(model, config):
 
 
 if __name__=="__main__":
-    config = get_config("mnist")
+    print("Implemented Datasets: mnist, fashion_mnist, cifar10")
+    dataset_name = input("Enter Dataset: ")
+    config = get_config(dataset_name.lower())
 
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", DEVICE, f"({torch.cuda.get_device_name(DEVICE)})" if torch.cuda.is_available() else "")
