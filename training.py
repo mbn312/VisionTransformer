@@ -8,7 +8,7 @@ DEVICE = torch.device("cpu")
 
 def train_model(config):
 
-    train_loader, val_loader = get_train_val_split(config)
+    train_loader, val_loader, config.train_mean, config.train_std = get_train_val_split(config)
 
     model = VisionTransformer(
         config.d_model,         
@@ -86,6 +86,8 @@ def train_model(config):
         else:
             print(f"[Epoch {epoch + 1}/{config.epochs}] Training Loss: {training_loss:.3f} | Validation Loss: {validation_loss:.3f}")
 
+    return config
+
 def get_model_accuracy(config):
 
     # Load trained model
@@ -121,7 +123,6 @@ def get_model_accuracy(config):
 
     print(f'-------------------------\n Model Accuracy: {(100 * correct / total):.2f} %\n-------------------------')
 
-
 if __name__=="__main__":
     print("Implemented Datasets: mnist, fashion_mnist, cifar10")
     dataset_name = input("Enter Dataset: ")
@@ -130,6 +131,6 @@ if __name__=="__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", DEVICE, f"({torch.cuda.get_device_name(DEVICE)})" if torch.cuda.is_available() else "")
 
-    train_model(config)
+    config = train_model(config)
 
     get_model_accuracy(config)
