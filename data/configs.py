@@ -17,8 +17,11 @@ class MNISTConfig:
     bias = False
     batch_size = 128
     n_workers = 0
+    lr = 5e-4
+    lr_min = 1e-5
+    weight_decay = 1e-4
     epochs = 5
-    lr = 0.005
+    warmup_epochs = 0
 
 @dataclass
 class FMNISTConfig:
@@ -37,8 +40,11 @@ class FMNISTConfig:
     bias = False
     batch_size = 128
     n_workers = 0
+    lr = 5e-4
+    lr_min = 1e-5
+    weight_decay = 1e-4
     epochs = 5
-    lr = 0.005   
+    warmup_epochs = 0
 
 @dataclass
 class CIFAR10Config:
@@ -57,5 +63,8 @@ class CIFAR10Config:
     bias = False
     batch_size = 128
     n_workers = 0
+    lr = 5e-4
+    lr_min = 1e-5
+    weight_decay = 1e-4
     epochs = 5
-    lr = 0.005   
+    warmup_epochs = 0

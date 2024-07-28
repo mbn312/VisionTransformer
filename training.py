@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.optim import Adam
+from torch.optim import Adam, AdamW, lr_scheduler
 from data.data_utils import get_config, get_dataset
 from models.model import VisionTransformer
 
@@ -24,7 +24,16 @@ def train_model(config):
         config.bias         
     ).to(DEVICE)
 
-    optimizer = Adam(model.parameters(), lr=config.lr)
+    if config.weight_decay == 0:
+        optimizer = Adam(model.parameters(), lr=config.lr)
+    else:
+        optimizer = AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+
+    scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=(config.epochs - config.warmup_epochs), eta_min=config.lr_min)
+
+    if config.warmup_epochs > 0:
+        warmup = lr_scheduler.LinearLR(optimizer=optimizer, start_factor=(1 / config.warmup_epochs), end_factor=1.0, total_iters=(config.warmup_epochs - 1), last_epoch=-1)
+
     criterion = nn.CrossEntropyLoss()
 
     model.train()
@@ -40,6 +49,11 @@ def train_model(config):
             optimizer.step()
 
             training_loss += loss.item()
+
+        if epoch < config.warmup_epochs:
+            warmup.step()
+        else:
+            scheduler.step()
 
         print(f'[Epoch {epoch + 1}/{config.epochs}] Training Loss: {training_loss  / len(train_loader) :.3f}')
 
