@@ -3,33 +3,31 @@ import torch.nn as nn
 import numpy as np
 
 class PatchEmbedding(nn.Module):
-    def __init__(self, d_model, img_size, patch_size, n_channels):
+    def __init__(self, 
+                 d_model,    # Width of model
+                 patch_size, # Patch size
+                 n_channels  # Number of channels
+                ):
         super().__init__()
 
-        self.d_model = d_model # Dimensionality of Model
-        self.img_size = img_size # Image Size
-        self.patch_size = patch_size # Patch Size
-        self.n_channels = n_channels # Number of Channels
+        self.linear_project = nn.Conv2d(n_channels, d_model, kernel_size=patch_size, stride=patch_size) 
 
-        self.linear_project = nn.Conv2d(self.n_channels, self.d_model, kernel_size=self.patch_size, stride=self.patch_size) 
-
-    # B: Batch Size
-    # C: Image Channels
-    # H: Image Height
-    # W: Image Width
-    # P_col: Patch Column
-    # P_row: Patch Row
     def forward(self, x):
-        x = self.linear_project(x) # (B, C, H, W) -> (B, d_model, P_col, P_row)
+        x = self.linear_project(x) # (B, C, H, W) -> (B, d_model, P_row, P_col)
 
-        x = x.flatten(2) # (B, d_model, P_col, P_row) -> (B, d_model, P)
+        x = x.flatten(2) # (B, d_model, P_row, P_col) -> (B, d_model, P)
 
         x = x.transpose(-2, -1) # (B, d_model, P) -> (B, P, d_model)
 
         return x
     
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_seq_length, learned_pe=True, dropout=0.):
+    def __init__(self, 
+                 d_model,           # Width of model 
+                 max_seq_length,    # Length of sequence 
+                 learned_pe=True,   # Whether to learn encodings or use sinusoidal ones 
+                 dropout=0.0        # Dropout rate
+                ):
         super().__init__()
 
         if learned_pe:
@@ -41,15 +39,16 @@ class PositionalEncoding(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
+    # Create sinusoidal positional encoding
     def create_encoding(self, max_seq_length, d_model):
         pe = torch.zeros(max_seq_length, d_model)
 
         for pos in range(max_seq_length):
             for i in range(d_model):
                 if i % 2 == 0:
-                    pe[pos][i] = np.sin(pos/(10000 ** (i/d_model)))
+                    pe[pos][i] = np.sin(pos / (10000 ** (i / d_model)))
                 else:
-                    pe[pos][i] = np.cos(pos/(10000 ** ((i-1)/d_model)))
+                    pe[pos][i] = np.cos(pos / (10000 ** ((i - 1) / d_model)))
 
         return pe[None, ...]
     
@@ -62,9 +61,16 @@ class PositionalEncoding(nn.Module):
         return x 
     
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model, n_heads, dropout=0.0, bias=False):
+    def __init__(self, 
+                 d_model,       # Width of model 
+                 n_heads=1,     # Number of attention heads 
+                 dropout=0.0,   # Dropout rate
+                 bias=False     # Bias of linear layers
+                ):
         super().__init__()
 
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+        
         self.n_heads = n_heads
         self.head_size = d_model // n_heads
         self.scale = self.head_size ** -0.5
@@ -119,11 +125,14 @@ class MultiHeadAttention(nn.Module):
         return attention
     
 class TransformerEncoder(nn.Module):
-    def __init__(self, d_model, n_heads, dropout=0.0, r_mlp=4, bias=False):
+    def __init__(self, 
+                 d_model,       # Width of model 
+                 n_heads=1,     # Number of attention heads 
+                 dropout=0.0,   # Dropout rate 
+                 r_mlp=4,       # Ratio of MLP hidden dim to d_model 
+                 bias=False     # Bias of linear layers
+                ):
         super().__init__()
-
-        self.d_model = d_model
-        self.n_heads = n_heads
 
         # Sub-Layer 1 Normalization
         self.ln1 = nn.LayerNorm(d_model)
@@ -136,9 +145,9 @@ class TransformerEncoder(nn.Module):
 
         # Multilayer Perception
         self.mlp = nn.Sequential(
-            nn.Linear(d_model, d_model*r_mlp, bias=bias),
+            nn.Linear(d_model, d_model * r_mlp, bias=bias),
             nn.GELU(),
-            nn.Linear(d_model*r_mlp, d_model, bias=bias),
+            nn.Linear(d_model * r_mlp, d_model, bias=bias),
             nn.Dropout(dropout)
         )
 
@@ -152,34 +161,46 @@ class TransformerEncoder(nn.Module):
         return out
     
 class VisionTransformer(nn.Module):
-    def __init__(self, d_model, n_classes, img_size, patch_size, n_channels, n_heads, n_layers, learned_pe=True, dropout=0.0, r_mlp=4, bias=False):
+    def __init__(self, 
+                 d_model,           # Width of model  
+                 n_classes,         # Number of dataset classes          
+                 img_size,          # Size of images 
+                 patch_size,        # Size of patches 
+                 n_channels,        # Number of image channels 
+                 n_heads,           # Number of attention heads 
+                 n_layers,          # Number of encoder layers 
+                 learned_pe=True,   # Whether to learn encodings or use sinusoidal ones  
+                 dropout=0.0,       # Dropout rate 
+                 r_mlp=4,           # Ratio of MLP hidden dim to d_model  
+                 bias=False         # Bias of linear layers
+                ):
         super().__init__()
 
         assert img_size[0] % patch_size[0] == 0 and img_size[1] % patch_size[1] == 0, "img_size dimensions must be divisible by patch_size dimensions"
-        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
 
-        self.d_model = d_model # Dimensionality of model
-        self.n_classes = n_classes # Number of classes
-        self.img_size = img_size # Image size
-        self.patch_size = patch_size # Patch size
-        self.n_channels = n_channels # Number of channels
-        self.n_heads = n_heads # Number of attention heads
-
-        self.n_patches = (self.img_size[0] * self.img_size[1]) // (self.patch_size[0] * self.patch_size[1])
+        self.n_patches = (img_size[0] * img_size[1]) // (patch_size[0] * patch_size[1])
         self.max_seq_length = self.n_patches + 1
         
-        self.patch_embedding = PatchEmbedding(self.d_model, self.img_size, self.patch_size, self.n_channels)
+        self.patch_embedding = PatchEmbedding(d_model, patch_size, n_channels)
 
-        self.cls_token = nn.Parameter(torch.randn(1, 1, self.d_model)) # Classification Token
+        # Classification token
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_model))
 
-        self.positional_encoding = PositionalEncoding( self.d_model, self.max_seq_length, learned_pe=learned_pe, dropout=dropout)
+        self.positional_encoding = PositionalEncoding(d_model, self.max_seq_length, learned_pe=learned_pe, dropout=dropout)
 
-        self.transformer_encoder = nn.Sequential(*[TransformerEncoder( self.d_model, self.n_heads, dropout=dropout, r_mlp=r_mlp, bias=bias) for _ in range(n_layers)])
+        self.transformer_encoder = nn.Sequential(
+            *[TransformerEncoder(
+                d_model, 
+                n_heads, 
+                dropout=dropout, 
+                r_mlp=r_mlp, 
+                bias=bias
+            ) for _ in range(n_layers)])
 
         # Classification MLP
         self.classifier = nn.Sequential(
-            nn.LayerNorm(self.d_model),
-            nn.Linear(self.d_model, self.n_classes, bias=bias),
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, n_classes, bias=bias),
             nn.Softmax(dim=-1)
         )
 
@@ -196,6 +217,7 @@ class VisionTransformer(nn.Module):
 
         x = self.transformer_encoder(x)
 
+        # Pass classification tokens through classification MLP
         x = self.classifier(x[:,0])
 
         return x
