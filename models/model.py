@@ -126,10 +126,10 @@ class MultiHeadAttention(nn.Module):
     
 class TransformerEncoder(nn.Module):
     def __init__(self, 
-                 d_model,       # Width of model 
+                 d_model,       # Width of model
+                 mlp_hidden,    # Width of MLP hidden 
                  n_heads=1,     # Number of attention heads 
                  dropout=0.0,   # Dropout rate 
-                 r_mlp=4,       # Ratio of MLP hidden dim to d_model 
                  bias=False     # Bias of linear layers
                 ):
         super().__init__()
@@ -145,9 +145,9 @@ class TransformerEncoder(nn.Module):
 
         # Multilayer Perception
         self.mlp = nn.Sequential(
-            nn.Linear(d_model, d_model * r_mlp, bias=bias),
+            nn.Linear(d_model, mlp_hidden, bias=bias),
             nn.GELU(),
-            nn.Linear(d_model * r_mlp, d_model, bias=bias),
+            nn.Linear(mlp_hidden, d_model, bias=bias),
             nn.Dropout(dropout)
         )
 
@@ -167,18 +167,18 @@ class VisionTransformer(nn.Module):
                  img_size,          # Size of images 
                  patch_size,        # Size of patches 
                  n_channels,        # Number of image channels 
-                 n_heads,           # Number of attention heads 
-                 n_layers,          # Number of encoder layers 
+                 mlp_hidden,        # Width of MLP hidden
+                 n_heads=1,         # Number of attention heads 
+                 n_layers=1,        # Number of encoder layers 
                  learned_pe=True,   # Whether to learn encodings or use sinusoidal ones  
-                 dropout=0.0,       # Dropout rate 
-                 r_mlp=4,           # Ratio of MLP hidden dim to d_model  
+                 dropout=0.0,       # Dropout rate  
                  bias=False         # Bias of linear layers
                 ):
         super().__init__()
 
         assert img_size[0] % patch_size[0] == 0 and img_size[1] % patch_size[1] == 0, "img_size dimensions must be divisible by patch_size dimensions"
 
-        self.n_patches = (img_size[0] * img_size[1]) // (patch_size[0] * patch_size[1])
+        self.n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])
         self.max_seq_length = self.n_patches + 1
         
         self.patch_embedding = PatchEmbedding(d_model, patch_size, n_channels)
@@ -190,10 +190,10 @@ class VisionTransformer(nn.Module):
 
         self.transformer_encoder = nn.Sequential(
             *[TransformerEncoder(
-                d_model, 
-                n_heads, 
+                d_model,
+                mlp_hidden,  
+                n_heads=n_heads, 
                 dropout=dropout, 
-                r_mlp=r_mlp, 
                 bias=bias
             ) for _ in range(n_layers)])
 

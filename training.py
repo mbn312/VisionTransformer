@@ -15,12 +15,12 @@ def train_model(config):
         config.n_classes,               
         config.img_size,          
         config.patch_size,        
-        config.n_channels,       
+        config.n_channels,
+        config.mlp_hidden,       
         config.n_heads,         
-        config.n_layers,         
+        config.n_layers,          
         config.learned_pe,  
-        config.dropout,      
-        config.r_mlp,          
+        config.dropout,               
         config.bias         
     ).to(DEVICE)
 
@@ -96,12 +96,12 @@ def get_model_accuracy(config):
         config.n_classes,               
         config.img_size,          
         config.patch_size,        
-        config.n_channels,       
+        config.n_channels,
+        config.mlp_hidden,       
         config.n_heads,         
         config.n_layers,         
         config.learned_pe,  
-        config.dropout,      
-        config.r_mlp,          
+        config.dropout,                
         config.bias         
     ).to(DEVICE)
 
