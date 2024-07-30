@@ -1,10 +1,11 @@
 import torch
 import numpy as np
+from data.configs import *
+from data.datasets import DatasetSplit
 import torchvision.transforms as T
 from torch.utils.data import DataLoader
-from torchvision.datasets.mnist import MNIST
-from data.datasets import *
-from data.configs import *
+from torchvision.datasets import MNIST, FashionMNIST, CIFAR10
+CIFAR10.url = "http://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
 
 def get_config(dataset):
     if dataset == "mnist":
@@ -32,9 +33,9 @@ def get_mean_std(data, img_channels, denom=1):
 
 def get_train_val_split(config):
     if config.dataset == "fashion_mnist":
-        dataset = FashionMNIST(train=True, transform=T.Resize(config.img_size))
+        dataset = FashionMNIST(root="./../datasets", train=True, download=True, transform=T.Resize(config.img_size))
     elif config.dataset == "cifar10":
-        dataset = CIFAR10(train=True, transform=T.Resize(config.img_size))
+        dataset = CIFAR10(root="./../datasets", train=True, download=True, transform=T.Resize(config.img_size))
     else:
         dataset = MNIST(root="./../datasets", train=True, download=True, transform=T.Resize(config.img_size))
 
