@@ -1,10 +1,11 @@
+import argparse
 import torch
 import torch.nn as nn
 from torch.optim import Adam, AdamW, lr_scheduler
 from data.data_utils import *
 from models.model import VisionTransformer
 
-DEVICE = torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def train_model(config):
 
@@ -37,7 +38,7 @@ def train_model(config):
     criterion = nn.CrossEntropyLoss()
 
     best_loss = float('inf')
-
+    
     for epoch in range(config.epochs):
         # Training
         model.train()
@@ -59,21 +60,23 @@ def train_model(config):
             scheduler.step()
 
         # Validation
-        model.eval()
         validation_loss = 0.0
-        correct, total = 0, 0
-        for inputs, labels in val_loader:
-            inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            validation_loss += loss.item()
+        if len(val_loader) > 0:
+            model.eval()
+            validation_loss = 0.0
+            correct, total = 0, 0
+            for inputs, labels in val_loader:
+                inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                validation_loss += loss.item()
 
-            if config.get_val_accuracy:
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels.shape[0]
-                correct += (predicted == labels).sum().item()
+                if config.get_val_accuracy:
+                    _, predicted = torch.max(outputs.data, 1)
+                    total += labels.shape[0]
+                    correct += (predicted == labels).sum().item()
 
-        validation_loss = validation_loss / len(val_loader)
+            validation_loss = validation_loss / len(val_loader)
 
         # Saves model if it performed better than the previous best
         if validation_loss <= best_loss:
@@ -81,7 +84,9 @@ def train_model(config):
             torch.save(model.state_dict(), config.model_location)
 
         # Print out metrics
-        if config.get_val_accuracy:
+        if len(val_loader) <= 0:
+            print(f"[Epoch {epoch + 1}/{config.epochs}] Training Loss: {training_loss:.3f}")
+        elif config.get_val_accuracy:
             print(f"[Epoch {epoch + 1}/{config.epochs}] Training Loss: {training_loss:.3f} | Validation Loss: {validation_loss:.3f} | Validation Accuracy: {100 * correct / total:.2f}")
         else:
             print(f"[Epoch {epoch + 1}/{config.epochs}] Training Loss: {training_loss:.3f} | Validation Loss: {validation_loss:.3f}")
@@ -89,7 +94,6 @@ def train_model(config):
     return config
 
 def get_model_accuracy(config):
-
     # Load trained model
     model = VisionTransformer(
         config.d_model,         
@@ -124,11 +128,36 @@ def get_model_accuracy(config):
     print(f'-------------------------\n Model Accuracy: {(100 * correct / total):.2f} %\n-------------------------')
 
 if __name__=="__main__":
-    print("Implemented Datasets: mnist, fashion_mnist, cifar10")
-    dataset_name = input("Enter Dataset: ")
-    config = get_config(dataset_name.lower())
+    parser = argparse.ArgumentParser(
+        prog="Vision Transformer",
+        description="Image classification using a vision transformer"
+    )
+    parser.add_argument("-d", "--dataset", type=str.lower, choices=["mnist", "fashion_mnist", "cifar10"], default="mnist", help="Name of dataset to use")
+    parser.add_argument("-is", "--img_size", type=int, nargs="*", help="Size of dataset images. Input as: height width")
+    parser.add_argument("-ps", "--patch_size", type=int, nargs="*", help="Size of patches. Input as: height width")
+    parser.add_argument("-dm", "--d_model", type=int, help="Width of model")
+    parser.add_argument("-mh", "--mlp_hidden", type=int, help="Width of hidden MLP")
+    parser.add_argument("-nh", "--heads", type=int, help="Number of attention heads")
+    parser.add_argument("-l", "--layers", type=int, help="Number of encoder layers")
+    parser.add_argument("-lp", "--learned_pe", type=bool, choices=[True, False], help="Whether or not to learn positional encodings")
+    parser.add_argument("-do", "--dropout", type=float, help="Dropout rate")
+    parser.add_argument("-b", "--bias", type=bool, choices=[True, False], help="Bias of linear layers")
+    parser.add_argument("-ph", "--prob_hflip", type=float, help="Probability of horizontal flip")
+    parser.add_argument("-cp", "--crop_padding", type=int, help="Random crop padding")
+    parser.add_argument("-tv", "--train_val_split", type=int, nargs="*", help="Training and validation split sizes. Input as: train_len val_len")
+    parser.add_argument("-va", "--get_val_accuracy", type=bool, choices=[True, False], help="Get validation accuracy")
+    parser.add_argument("-bs", "--batch_size", type=int, help="Size of batches")
+    parser.add_argument("-w", "--workers", type=int, help="Number of workers to use for each DataLoader")
+    parser.add_argument("-lr", "--lr", type=float, help="Starting learning rate")
+    parser.add_argument("-lm", "--lr_min", type=float, help="Minimum learning rate")
+    parser.add_argument("-wd", "--weight_decay", type=float, help="Weight decay for optimizer")
+    parser.add_argument("-e", "--epochs", type=int, help="Number of epochs to train on")
+    parser.add_argument("-we", "--warmup_epochs", type=int, help="Number of epochs to warmup learning rate scheduler")
+    parser.add_argument("-ml", "--model_location", type=str, help="Location of model file")
+    args = parser.parse_args()
+    
+    config = get_config(args)
 
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", DEVICE, f"({torch.cuda.get_device_name(DEVICE)})" if torch.cuda.is_available() else "")
 
     config = train_model(config)
