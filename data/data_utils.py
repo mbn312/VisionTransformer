@@ -1,27 +1,46 @@
 import torch
 import numpy as np
-from data.configs import *
+from data.configs import CIFAR10Config, FMNISTConfig, MNISTConfig
 from data.datasets import DatasetSplit
 import torchvision.transforms as T
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST, FashionMNIST, CIFAR10
 
+
+def parse_hw_dims(values, name):
+    if len(values) == 0 or len(values) > 2:
+        raise ValueError(f"{name} expects one or two integers.")
+    if any(value <= 0 for value in values):
+        raise ValueError(f"{name} values must be positive.")
+
+    return (values[0], values[0]) if len(values) == 1 else (values[0], values[1])
+
+
+def parse_train_val_split(values, train_set_len):
+    if len(values) == 0 or len(values) > 2:
+        raise ValueError("train_val_split expects one or two integers.")
+
+    if any(value < 0 for value in values):
+        raise ValueError("train_val_split values cannot be negative.")
+
+    return (values[0], train_set_len - values[0]) if len(values) == 1 else (values[0], values[1])
+
 def get_config(args):
     if args.dataset == "mnist":
-        config = MNISTConfig
+        config = MNISTConfig()
     elif args.dataset == "fashion_mnist":
-        config = FMNISTConfig
+        config = FMNISTConfig()
     elif args.dataset == "cifar10":
         CIFAR10.url = "http://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
-        config = CIFAR10Config
+        config = CIFAR10Config()
     else:
         raise Exception("Dataset not implemented.")
     
     if args.img_size is not None:
-        config.img_size = (args.img_size[0], args.img_size[0]) if len(args.img_size) == 1 else (args.img_size[0], args.img_size[1])
+        config.img_size = parse_hw_dims(args.img_size, "img_size")
 
     if args.patch_size is not None:
-        config.patch_size = (args.patch_size[0], args.patch_size[0]) if len(args.patch_size) == 1 else (args.patch_size[0], args.patch_size[1])
+        config.patch_size = parse_hw_dims(args.patch_size, "patch_size")
 
     assert config.img_size[0] % config.patch_size[0] == 0 and config.img_size[1] % config.patch_size[1] == 0, "img_size dimensions must be divisible by patch_size dimensions"
 
@@ -83,6 +102,33 @@ def get_config(args):
     if args.model_location is not None:
         config.model_location = args.model_location
 
+    if config.d_model <= 0:
+        raise ValueError("d_model must be positive.")
+    if config.mlp_hidden <= 0:
+        raise ValueError("mlp_hidden must be positive.")
+    if config.n_heads <= 0:
+        raise ValueError("n_heads must be positive.")
+    if config.n_layers <= 0:
+        raise ValueError("n_layers must be positive.")
+    if config.batch_size <= 0:
+        raise ValueError("batch_size must be positive.")
+    if config.n_workers < 0:
+        raise ValueError("workers cannot be negative.")
+    if config.lr <= 0:
+        raise ValueError("lr must be positive.")
+    if config.lr_min < 0:
+        raise ValueError("lr_min cannot be negative.")
+    if config.weight_decay < 0:
+        raise ValueError("weight_decay cannot be negative.")
+    if config.epochs <= 0:
+        raise ValueError("epochs must be positive.")
+    if config.warmup_epochs < 0:
+        raise ValueError("warmup_epochs cannot be negative.")
+    if not 0 <= config.prob_hflip <= 1:
+        raise ValueError("prob_hflip must be between 0 and 1.")
+    if config.crop_padding < 0:
+        raise ValueError("crop_padding cannot be negative.")
+
     if config.dataset == "fashion_mnist":
         train_set = FashionMNIST(root="./../datasets", train=True, download=True, transform=T.Resize(config.img_size))
     elif config.dataset == "cifar10":
@@ -91,18 +137,21 @@ def get_config(args):
         train_set = MNIST(root="./../datasets", train=True, download=True, transform=T.Resize(config.img_size))
 
     if args.train_val_split is not None:
-        config.train_val_split = (args.train_val_split[0], len(train_set) - args.train_val_split[0]) if len(args.train_val_split) == 1 else (args.train_val_split[0], args.train_val_split[1]) 
+        config.train_val_split = parse_train_val_split(args.train_val_split, len(train_set))
 
-    assert ((config.train_val_split[0] + config.train_val_split[1]) == len(train_set)) and (config.train_val_split[0] >= 0) and (config.train_val_split[1] >= 0), "Sum of splits must be equal to length of training data"
+    assert ((config.train_val_split[0] + config.train_val_split[1]) == len(train_set)) and (config.train_val_split[0] > 0) and (config.train_val_split[1] >= 0), "Train split must be positive and the sum of splits must equal the length of training data"
 
     return config
 
 def get_mean_std(data, img_channels, denom=1):
     # Get only the images from the dataset
-    images = np.array([x[0] for x in data]) / denom
+    images = np.stack([np.array(x[0], dtype=np.float32) / denom for x in data])
+
+    if images.ndim == 3:
+        images = images[..., None]
 
     # Combine pixels of each channel into one dimension
-    images = images.reshape(img_channels, -1)
+    images = np.moveaxis(images, -1, 0).reshape(img_channels, -1)
 
     # Calculate the mean and standard deviation
     mean, std = images.mean(axis=1), images.std(axis=1)

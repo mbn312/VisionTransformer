@@ -1,11 +1,32 @@
 import argparse
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 from torch.optim import Adam, AdamW, lr_scheduler
-from data.data_utils import *
+from data.data_utils import get_config, get_test_set, get_train_val_split
 from models.model import VisionTransformer
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def str_to_bool(value):
+    if isinstance(value, bool):
+        return value
+
+    value = value.lower()
+    if value in {"true", "t", "1", "yes", "y"}:
+        return True
+    if value in {"false", "f", "0", "no", "n"}:
+        return False
+
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
+def save_checkpoint(model, model_location):
+    checkpoint_path = Path(model_location)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), checkpoint_path)
 
 def train_model(config):
 
@@ -30,10 +51,23 @@ def train_model(config):
     else:
         optimizer = AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
-    scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=(config.epochs - config.warmup_epochs), eta_min=config.lr_min)
+    scheduler = None
+    if config.epochs > config.warmup_epochs:
+        scheduler = lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=(config.epochs - config.warmup_epochs),
+            eta_min=config.lr_min
+        )
 
+    warmup = None
     if config.warmup_epochs > 0:
-        warmup = lr_scheduler.LinearLR(optimizer=optimizer, start_factor=(1 / config.warmup_epochs), end_factor=1.0, total_iters=(config.warmup_epochs - 1), last_epoch=-1)
+        warmup = lr_scheduler.LinearLR(
+            optimizer=optimizer,
+            start_factor=(1 / config.warmup_epochs),
+            end_factor=1.0,
+            total_iters=max(config.warmup_epochs - 1, 1),
+            last_epoch=-1
+        )
 
     criterion = nn.CrossEntropyLoss()
 
@@ -45,7 +79,7 @@ def train_model(config):
         training_loss = 0.0
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             outputs = model(inputs)
             loss = criterion(outputs, labels)
             loss.backward()
@@ -54,9 +88,9 @@ def train_model(config):
 
         training_loss = training_loss / len(train_loader)
         # Update learning rate scheduler
-        if epoch < config.warmup_epochs:
+        if warmup is not None and epoch < config.warmup_epochs:
             warmup.step()
-        else:
+        elif scheduler is not None:
             scheduler.step()
 
         # Validation
@@ -65,23 +99,27 @@ def train_model(config):
             model.eval()
             validation_loss = 0.0
             correct, total = 0, 0
-            for inputs, labels in val_loader:
-                inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                validation_loss += loss.item()
+            with torch.no_grad():
+                for inputs, labels in val_loader:
+                    inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+                    validation_loss += loss.item()
 
-                if config.get_val_accuracy:
-                    _, predicted = torch.max(outputs.data, 1)
-                    total += labels.shape[0]
-                    correct += (predicted == labels).sum().item()
+                    if config.get_val_accuracy:
+                        predicted = outputs.argmax(dim=1)
+                        total += labels.shape[0]
+                        correct += (predicted == labels).sum().item()
 
             validation_loss = validation_loss / len(val_loader)
+            checkpoint_loss = validation_loss
+        else:
+            checkpoint_loss = training_loss
 
         # Saves model if it performed better than the previous best
-        if validation_loss <= best_loss:
-            best_loss = validation_loss
-            torch.save(model.state_dict(), config.model_location)
+        if checkpoint_loss <= best_loss:
+            best_loss = checkpoint_loss
+            save_checkpoint(model, config.model_location)
 
         # Print out metrics
         if len(val_loader) <= 0:
@@ -109,7 +147,11 @@ def get_model_accuracy(config):
         config.bias         
     ).to(DEVICE)
 
-    model.load_state_dict(torch.load(config.model_location, map_location=DEVICE))
+    checkpoint_path = Path(config.model_location)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    model.load_state_dict(torch.load(checkpoint_path, map_location=DEVICE))
 
     # Get test set
     test_loader = get_test_set(config)
@@ -121,7 +163,7 @@ def get_model_accuracy(config):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
 
             outputs = model(images)
-            _, predicted = torch.max(outputs.data, 1)
+            predicted = outputs.argmax(dim=1)
             total += labels.shape[0]
             correct += (predicted == labels).sum().item()
 
@@ -133,19 +175,19 @@ if __name__=="__main__":
         description="Image classification using a vision transformer"
     )
     parser.add_argument("-d", "--dataset", type=str.lower, choices=["mnist", "fashion_mnist", "cifar10"], default="mnist", help="Name of dataset to use")
-    parser.add_argument("-is", "--img_size", type=int, nargs="*", help="Size of dataset images. Input as: height width")
-    parser.add_argument("-ps", "--patch_size", type=int, nargs="*", help="Size of patches. Input as: height width")
+    parser.add_argument("-is", "--img_size", type=int, nargs="+", help="Size of dataset images. Input as: height width")
+    parser.add_argument("-ps", "--patch_size", type=int, nargs="+", help="Size of patches. Input as: height width")
     parser.add_argument("-dm", "--d_model", type=int, help="Width of model")
     parser.add_argument("-mh", "--mlp_hidden", type=int, help="Width of hidden MLP")
     parser.add_argument("-nh", "--heads", type=int, help="Number of attention heads")
     parser.add_argument("-l", "--layers", type=int, help="Number of encoder layers")
-    parser.add_argument("-lp", "--learned_pe", type=bool, choices=[True, False], help="Whether or not to learn positional encodings")
+    parser.add_argument("-lp", "--learned_pe", type=str_to_bool, help="Whether or not to learn positional encodings")
     parser.add_argument("-do", "--dropout", type=float, help="Dropout rate")
-    parser.add_argument("-b", "--bias", type=bool, choices=[True, False], help="Bias of linear layers")
+    parser.add_argument("-b", "--bias", type=str_to_bool, help="Bias of linear layers")
     parser.add_argument("-ph", "--prob_hflip", type=float, help="Probability of horizontal flip")
     parser.add_argument("-cp", "--crop_padding", type=int, help="Random crop padding")
-    parser.add_argument("-tv", "--train_val_split", type=int, nargs="*", help="Training and validation split sizes. Input as: train_len val_len")
-    parser.add_argument("-va", "--get_val_accuracy", type=bool, choices=[True, False], help="Get validation accuracy")
+    parser.add_argument("-tv", "--train_val_split", type=int, nargs="+", help="Training and validation split sizes. Input as: train_len val_len")
+    parser.add_argument("-va", "--get_val_accuracy", type=str_to_bool, help="Get validation accuracy")
     parser.add_argument("-bs", "--batch_size", type=int, help="Size of batches")
     parser.add_argument("-w", "--workers", type=int, help="Number of workers to use for each DataLoader")
     parser.add_argument("-lr", "--lr", type=float, help="Starting learning rate")

@@ -31,11 +31,9 @@ class PositionalEncoding(nn.Module):
         super().__init__()
 
         if learned_pe:
-            positional_encoding = nn.Parameter((d_model ** -0.5) * torch.randn(1, max_seq_length, d_model))
+            self.positional_encoding = nn.Parameter((d_model ** -0.5) * torch.randn(1, max_seq_length, d_model))
         else:
-            positional_encoding = self.create_encoding(max_seq_length, d_model)
-
-        self.register_buffer('positional_encoding', positional_encoding)
+            self.register_buffer('positional_encoding', self.create_encoding(max_seq_length, d_model))
 
         self.dropout = nn.Dropout(dropout)
 
@@ -92,12 +90,12 @@ class MultiHeadAttention(nn.Module):
         Q = Q.transpose(1, 2)  # (B, L, n_heads, head_size) -> (B, n_heads, L, head_size)
         
         # Obtain key heads
-        K = self.query(x)
+        K = self.key(x)
         K = K.view(B, L, self.n_heads, self.head_size)
         K = K.transpose(1, 2)
 
         # Obtain value heads
-        V = self.query(x)
+        V = self.value(x)
         V = V.view(B, L, self.n_heads, self.head_size)
         V = V.transpose(1, 2) 
 
@@ -200,8 +198,7 @@ class VisionTransformer(nn.Module):
         # Classification MLP
         self.classifier = nn.Sequential(
             nn.LayerNorm(d_model),
-            nn.Linear(d_model, n_classes, bias=bias),
-            nn.Softmax(dim=-1)
+            nn.Linear(d_model, n_classes, bias=bias)
         )
 
     def forward(self, images):

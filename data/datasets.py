@@ -1,14 +1,13 @@
 import torchvision.transforms as T
-from datasets import load_dataset
 from torch.utils.data import Dataset
     
 class DatasetSplit(Dataset):
-    def __init__(self, data, classes=None, transform=T.Compose([])):
+    def __init__(self, data, classes=None, transform=None):
         self.dataset = data
 
         self.classes = classes
 
-        self.transform = transform
+        self.transform = transform or T.Compose([])
 
     def __len__(self):
         return len(self.dataset)
